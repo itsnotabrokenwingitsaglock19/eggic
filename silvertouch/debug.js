@@ -1,5 +1,5 @@
 // The debug view, shown only when the page's address ends in ?debug.
-// It draws the edges between the bands and a few lines of readings, for
+// It draws the edges between the notes and a few lines of readings, for
 // checking the app on a phone. It is never shown otherwise.
 
 export function debugRequested() {
@@ -10,14 +10,21 @@ export function drawDebug(g, view, surface, lines) {
   const { placement } = view;
   g.save();
 
-  // Band edges across the egg.
+  // The edges between rows and between columns.
   g.strokeStyle = 'rgba(0, 0, 0, 0.25)';
   g.lineWidth = 1;
-  for (const edgeMm of surface.edgesMm()) {
+  for (const edgeMm of surface.rowEdgesMm()) {
     const y = placement.baseY - edgeMm * placement.pxPerMm;
     g.beginPath();
     g.moveTo(placement.centreX - 24 * placement.pxPerMm, y);
     g.lineTo(placement.centreX + 24 * placement.pxPerMm, y);
+    g.stroke();
+  }
+  for (const edgeMm of surface.columnEdgesMm()) {
+    const x = placement.centreX + edgeMm * placement.pxPerMm;
+    g.beginPath();
+    g.moveTo(x, placement.baseY + 3 * placement.pxPerMm);
+    g.lineTo(x, placement.baseY - 59 * placement.pxPerMm);
     g.stroke();
   }
 

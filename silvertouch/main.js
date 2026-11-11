@@ -1,9 +1,10 @@
 // Starts a release: reads its settings, picks the parts it names, and
 // connects touch to sound and to the picture.
-import { EGG_HEIGHT_MM, EGG_WIDEST_HEIGHT_MM } from './surface/egg-outline.js';
+import { EGG_HEIGHT_MM, EGG_HALF_WIDTH_MM, EGG_WIDEST_HEIGHT_MM } from './surface/egg-outline.js';
 import { LIFE_SIZE_CSS_PX_PER_MM, placeEgg, clientToEgg } from './surface/screen.js';
 import { createStripesSurface } from './surface/stripes.js';
-import { SCALES, scaleNotes } from './engine/scales.js';
+import { createGridSurface } from './surface/grid.js';
+import { SCALES, REGISTER_ORDER, scaleNotes } from './engine/scales.js';
 import { soundSettings, createRestDetector, createPressVolume } from './engine/expression.js';
 import { createSoundEngine } from './engine/sound-engine.js';
 import { createFixedTuning } from './tuning/fixed.js';
@@ -13,7 +14,7 @@ import { trackTouches } from './input/touches.js';
 import { debugRequested, drawDebug } from './debug.js';
 
 // The parts a release can pick from, by the names used in its settings.
-const SURFACES = { stripes: createStripesSurface };
+const SURFACES = { stripes: createStripesSurface, grid: createGridSurface };
 const TUNINGS = { fixed: createFixedTuning, gestures: createGestureTuning };
 const LOOKS = { sweep: createSweepLook };
 
@@ -47,17 +48,27 @@ export function start(release) {
   const press = createPressVolume(sound.press);
   const makeSurface = pick(SURFACES, release.surface.kind, 'surface');
 
-  // The notes and the surface depend on the scale: one band per note.
+  // The notes and the surface depend on the scale: one row per note.
   let notes = scaleNotes(tuning.current().scale);
   let surface = makeSurface(release.surface, notes.length);
+
+  // Each column to the right plays one register higher than the one before.
+  function registerAt(column) {
+    return REGISTER_ORDER[REGISTER_ORDER.indexOf(tuning.current().register) + column];
+  }
+  for (const register of tuning.options().registers) {
+    if (REGISTER_ORDER.indexOf(register) + surface.columns > REGISTER_ORDER.length) {
+      throw new Error(`register "${register}" has no notes for the rightmost column`);
+    }
+  }
 
   const view = { width: 0, height: 0, placement: null };
   const playing = new Map(); // touch id -> how that touch is being played
   let frameWanted = false;
   let lastReading = null;
   // Where the thumb last played, for the sound that answers a gesture.
-  // Before anything is played: the egg's widest point.
-  let lastSpot = { xMm: 0, heightMm: EGG_WIDEST_HEIGHT_MM };
+  // Before anything is played: the egg's widest point, left of the axis.
+  let lastSpot = { xMm: -EGG_HALF_WIDTH_MM / 2, heightMm: EGG_WIDEST_HEIGHT_MM };
 
   function nowSeconds() {
     return performance.now() / 1000;
@@ -125,7 +136,7 @@ export function start(release) {
     for (const [id, state] of playing) {
       if (!player || id !== player.id) {
         engine.setTouch(id, null);
-        state.band = -1;
+        state.cell = null;
         state.rest.reset();
       }
     }
@@ -135,26 +146,28 @@ export function start(release) {
       const spot = clientToEgg(view.placement, player.x, player.y);
       const where = surface.locate(spot.xMm, spot.heightMm);
       thumb = spot;
-      if (where.inside) {
-        const band = surface.bandFrom(spot.heightMm, state.band);
-        if (band !== state.band) state.rest.reset(); // a new note: no vibrato yet
-        state.band = band;
+      const cell = surface.cellFrom(spot.xMm, spot.heightMm, state.cell);
+      if (cell) {
+        const moved =
+          !state.cell || cell.row !== state.cell.row || cell.column !== state.cell.column;
+        if (moved) state.rest.reset(); // a new note: no vibrato yet
+        state.cell = cell;
         state.rest.update(spot.xMm, spot.heightMm, now);
         const wanted = {
           voice: current.voice,
-          register: current.register,
-          note: notes[band],
+          register: registerAt(cell.column),
+          note: notes[cell.row],
           gain: press.gainFor(player.contactSize),
           tone: where.tone,
           vibratoCents: state.rest.cents(now),
         };
         engine.setTouch(player.id, wanted);
         lastSpot = spot;
-        lastReading = { touch: player, wanted, band };
+        lastReading = { touch: player, wanted, cell };
       } else {
         // The thumb has slid off the egg: silence until it comes back.
         engine.setTouch(player.id, null);
-        state.band = -1;
+        state.cell = null;
         state.rest.reset();
       }
     }
@@ -190,11 +203,11 @@ export function start(release) {
   // second. A new scale: a quick run from that note up to the top.
   function answer(kind) {
     const current = tuning.current();
-    const band = Math.max(0, surface.bandAt(lastSpot.heightMm));
-    const from = kind === 'scale' ? notes.slice(band) : [notes[band]];
+    const cell = surface.cellAt(lastSpot.xMm, lastSpot.heightMm) || { row: 0, column: 0 };
+    const from = kind === 'scale' ? notes.slice(cell.row) : [notes[cell.row]];
     const sung = from.map((note) => ({
       voice: current.voice,
-      register: current.register,
+      register: registerAt(cell.column),
       note,
     }));
     const answerSettings = sound.answer;
@@ -212,15 +225,14 @@ export function start(release) {
 
   tuning.onChange((kind, current) => {
     notes = scaleNotes(current.scale);
-    if (notes.length !== surface.bandCount) {
+    if (notes.length !== surface.rows) {
       surface = makeSurface(release.surface, notes.length);
-      for (const state of playing.values()) state.band = -1;
+      for (const state of playing.values()) state.cell = null;
     }
     look.setTuning(current, performance.now());
     // The new tuning's files may still be on their way; answer when they
     // are here, unless the tuning has moved on by then.
-    engine
-      .load(current.voice, current.register, notes)
+    loadTuning(current)
       .then(() => {
         if (tuning.current() === current) answer(kind);
       })
@@ -237,7 +249,7 @@ export function start(release) {
       playing.set(touch.id, {
         beganOnEgg,
         plays: beganOnEgg && !playingTouch(),
-        band: -1,
+        cell: null,
         rest: createRestDetector(sound.vibrato),
       });
     }
@@ -276,6 +288,18 @@ export function start(release) {
 
   // ---- loading ----------------------------------------------------------
 
+  // The files one tuning needs: its scale's notes in the register of every
+  // column, the leftmost column first.
+  function loadTuning(current) {
+    const wanted = scaleNotes(current.scale);
+    const first = REGISTER_ORDER.indexOf(current.register);
+    let loaded = Promise.resolve();
+    for (let column = 0; column < surface.columns; column += 1) {
+      loaded = loaded.then(() => engine.load(current.voice, REGISTER_ORDER[first + column], wanted));
+    }
+    return loaded;
+  }
+
   // After the starting tuning's files, fetch the rest one voice and register
   // at a time, nearest tunings first, so a gesture is answered without a
   // wait. Each lot holds the notes of every scale the release offers.
@@ -290,10 +314,18 @@ export function start(release) {
     }
     const distance = (voice, register) =>
       (voice === first.voice ? 0 : 2) +
-      Math.abs(options.registers.indexOf(register) - options.registers.indexOf(first.register));
+      Math.abs(REGISTER_ORDER.indexOf(register) - REGISTER_ORDER.indexOf(first.register));
+    // Every register some column can play.
+    const registers = [];
+    for (const register of options.registers) {
+      for (let column = 0; column < surface.columns; column += 1) {
+        const played = REGISTER_ORDER[REGISTER_ORDER.indexOf(register) + column];
+        if (registers.indexOf(played) < 0) registers.push(played);
+      }
+    }
     const lots = [];
     for (const voice of options.voices) {
-      for (const register of options.registers) lots.push({ voice, register });
+      for (const register of registers) lots.push({ voice, register });
     }
     lots.sort((a, b) => distance(a.voice, a.register) - distance(b.voice, b.register));
 
@@ -321,9 +353,9 @@ export function start(release) {
       `touches ${touches.list().length}`,
     ];
     if (lastReading) {
-      const { touch, wanted, band } = lastReading;
+      const { touch, wanted, cell } = lastReading;
       lines.push(
-        `band ${band} note ${wanted.note}  gain ${wanted.gain.toFixed(2)}  tone ${wanted.tone.toFixed(2)}`,
+        `row ${cell.row} column ${cell.column}  ${wanted.register} ${wanted.note}  gain ${wanted.gain.toFixed(2)}  tone ${wanted.tone.toFixed(2)}`,
         `vibrato ${wanted.vibratoCents.toFixed(1)} c`,
         `contact ${touch.width.toFixed(1)} x ${touch.height.toFixed(1)}  pressure ${touch.pressure.toFixed(2)}  ${touch.kind}`,
       );
@@ -342,9 +374,7 @@ export function start(release) {
 
   look.setTuning(tuning.current(), performance.now());
   resize();
-  const first = tuning.current();
-  engine
-    .load(first.voice, first.register, notes)
+  loadTuning(tuning.current())
     .catch(() => {
       // The egg stays silent; the debug view shows the error.
     })

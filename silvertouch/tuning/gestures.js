@@ -73,7 +73,8 @@ export function createGestureTuning(settings, { voices, storage, storageKey }) {
   const options = {
     voices,
     scales: settings.scales,
-    registers: REGISTER_ORDER,
+    // A release may offer fewer registers than exist, lowest first.
+    registers: settings.registers || REGISTER_ORDER,
   };
   const limits = {
     slideMm: settings.slideMm === undefined ? GESTURE_DEFAULTS.slideMm : settings.slideMm,

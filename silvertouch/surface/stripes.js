@@ -55,5 +55,29 @@ export function createStripesSurface(settings, bandCount) {
     return edges;
   }
 
-  return { bandCount, bandHeightMm, bandAt, bandFrom, locate, edgesMm };
+  // The same answers in the words every surface layout shares: a cell is
+  // { row, column }, and the stripes have one column.
+  function cellAt(xMm, heightMm) {
+    if (!isInsideEgg(xMm, heightMm)) return null;
+    return { row: bandAt(heightMm), column: 0 };
+  }
+  function cellFrom(xMm, heightMm, current) {
+    if (!isInsideEgg(xMm, heightMm)) return null;
+    return { row: bandFrom(heightMm, current ? current.row : -1), column: 0 };
+  }
+
+  return {
+    rows: bandCount,
+    columns: 1,
+    bandCount,
+    bandHeightMm,
+    bandAt,
+    bandFrom,
+    cellAt,
+    cellFrom,
+    locate,
+    edgesMm,
+    rowEdgesMm: edgesMm,
+    columnEdgesMm: () => [],
+  };
 }
