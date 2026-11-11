@@ -33,6 +33,10 @@ export const SOUND_DEFAULTS = {
     brightHz: 10000, // filter at its right edge
     smoothingSeconds: 0.05,
   },
+  // A second note sounding with the first, where the surface asks for one.
+  harmony: {
+    level: 0.7, // its volume beside the first note's 1
+  },
   // The sound that answers a tuning gesture: one note, or for a new scale a
   // quick run of notes up to the top of the egg.
   answer: {

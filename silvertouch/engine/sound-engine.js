@@ -9,6 +9,8 @@
 // Sound path of one touch:
 //   note file (looping) -> note gain (glide) -> tone filter -> press gain
 //   -> fade gain (attack, release) -> master -> speakers
+// A touch can sound a second note file with the first; both share the path
+// from the tone filter on.
 // A slow oscillator bends the playback speed of the note files for vibrato.
 import { noteFile } from './scales.js';
 import { toneToHz, centsToRate } from './expression.js';
@@ -133,12 +135,13 @@ export function createSoundEngine({ basePath, settings, meter }) {
     param.setTargetAtTime(value, now, seconds);
   }
 
-  function startSource(voice, buffer, now, startGain) {
+  // One looping note file feeding a touch's sound, at a level of its own.
+  function startSource(voice, buffer, now, startLevel) {
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.loop = true;
     const gain = context.createGain();
-    gain.gain.setValueAtTime(startGain, now);
+    gain.gain.setValueAtTime(startLevel, now);
     source.connect(gain);
     gain.connect(voice.filter);
     try {
@@ -158,8 +161,42 @@ export function createSoundEngine({ basePath, settings, meter }) {
     return { source, gain };
   }
 
-  function startVoice(wanted, buffer, address, now) {
-    const voice = { address, current: null, aims: {} };
+  // A touch's sound has two layers: the note itself ("main") and, where the
+  // surface asks for one, a second note sounding with it ("second"). Set
+  // what a layer plays: a note file's address and buffer at a level, or
+  // null for nothing. A change glides: the new note fades in while the old
+  // one fades out.
+  function setLayer(voice, name, address, buffer, level, now, atStart) {
+    const layer = voice.layers[name];
+    const seconds = settings.glideSeconds / 3;
+    if (layer.address === address) {
+      if (layer.current && Math.abs(layer.level - level) > 1e-4) {
+        layer.level = level;
+        layer.current.gain.gain.setTargetAtTime(level, now, seconds);
+      }
+      return;
+    }
+    if (layer.current) {
+      layer.current.gain.gain.setTargetAtTime(0, now, seconds);
+      layer.current.source.stop(now + settings.glideSeconds * 3);
+      layer.current = null;
+    }
+    layer.address = address;
+    layer.level = level;
+    if (!address) return;
+    // At the very start of a touch the touch's own fade-in is the attack.
+    layer.current = startSource(voice, buffer, now, atStart ? level : 0);
+    if (!atStart) layer.current.gain.gain.setTargetAtTime(level, now, seconds);
+  }
+
+  function startVoice(wanted, now) {
+    const voice = {
+      aims: {},
+      layers: {
+        main: { address: null, current: null, level: 1 },
+        second: { address: null, current: null, level: 0 },
+      },
+    };
 
     voice.filter = context.createBiquadFilter();
     voice.filter.type = 'lowpass';
@@ -184,20 +221,7 @@ export function createSoundEngine({ basePath, settings, meter }) {
     voice.filter.connect(voice.press);
     voice.press.connect(voice.fade);
     voice.fade.connect(master);
-
-    voice.current = startSource(voice, buffer, now, 1);
     return voice;
-  }
-
-  // The glide: the new note fades in while the old one fades out.
-  function changeNote(voice, buffer, address, now) {
-    const seconds = settings.glideSeconds / 3;
-    const old = voice.current;
-    old.gain.gain.setTargetAtTime(0, now, seconds);
-    old.source.stop(now + settings.glideSeconds * 3);
-    voice.current = startSource(voice, buffer, now, 0);
-    voice.current.gain.gain.setTargetAtTime(1, now, seconds);
-    voice.address = address;
   }
 
   function release(voice) {
@@ -211,7 +235,11 @@ export function createSoundEngine({ basePath, settings, meter }) {
         // Already disconnected.
       }
     };
-    for (const node of [voice.current.source, voice.vibrato]) {
+    const sounding = [voice.vibrato];
+    for (const name of ['main', 'second']) {
+      if (voice.layers[name].current) sounding.push(voice.layers[name].current.source);
+    }
+    for (const node of sounding) {
       try {
         node.stop(end);
       } catch (error) {
@@ -221,7 +249,8 @@ export function createSoundEngine({ basePath, settings, meter }) {
   }
 
   // Say what one touch should sound like now. `wanted` is null for silence,
-  // or { voice, register, note, gain, tone, vibratoCents }.
+  // or { voice, register, note, gain, tone, vibratoCents } and, for a second
+  // note sounding with the first, second: { register, note, level }.
   function setTouch(id, wanted) {
     const voice = voices.get(id);
     if (!wanted) {
@@ -238,12 +267,23 @@ export function createSoundEngine({ basePath, settings, meter }) {
 
     const now = context.currentTime;
     let live = voice;
-    if (!live) {
-      live = startVoice(wanted, buffer, address, now);
+    const atStart = !live;
+    if (atStart) {
+      live = startVoice(wanted, now);
       voices.set(id, live);
-    } else if (live.address !== address) {
-      changeNote(live, buffer, address, now);
     }
+    setLayer(live, 'main', address, buffer, 1, now, atStart);
+
+    // The second note, if its file is here; without it the first plays alone.
+    let secondAddress = null;
+    let secondBuffer = null;
+    if (wanted.second) {
+      secondAddress = noteFile(basePath, wanted.voice, wanted.second.register, wanted.second.note);
+      secondBuffer = buffers.get(secondAddress);
+      if (!secondBuffer) secondAddress = null;
+    }
+    setLayer(live, 'second', secondAddress, secondBuffer, wanted.second ? wanted.second.level : 0, now, atStart);
+
     const toneHz = toneToHz(wanted.tone, settings.tone);
     aim(live, 'press', live.press.gain, wanted.gain, settings.press.smoothingSeconds, now);
     aim(live, 'tone', live.filter.frequency, toneHz, settings.tone.smoothingSeconds, now);
@@ -350,7 +390,10 @@ export function createSoundEngine({ basePath, settings, meter }) {
       sampleRate: context ? context.sampleRate : 0,
       loaded: buffers.size,
       loading: loading.size,
-      sounding: Array.from(voices.values()).map((voice) => voice.address),
+      sounding: Array.from(voices.values()).map((voice) => voice.layers.main.address),
+      harmony: Array.from(voices.values())
+        .map((voice) => voice.layers.second.address)
+        .filter((address) => address !== null),
       singing: song !== null,
       error: lastError,
     };

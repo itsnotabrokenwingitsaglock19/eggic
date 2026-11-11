@@ -5,6 +5,7 @@ import { LIFE_SIZE_CSS_PX_PER_MM, placeEgg, clientToEgg } from './surface/screen
 import { createStripesSurface } from './surface/stripes.js';
 import { createGridSurface } from './surface/grid.js';
 import { SCALES, REGISTER_ORDER, scaleNotes } from './engine/scales.js';
+import { cellNotes, registerSpan } from './engine/cells.js';
 import { soundSettings, createRestDetector, createPressVolume } from './engine/expression.js';
 import { createSoundEngine } from './engine/sound-engine.js';
 import { createFixedTuning } from './tuning/fixed.js';
@@ -52,13 +53,13 @@ export function start(release) {
   let notes = scaleNotes(tuning.current().scale);
   let surface = makeSurface(release.surface, notes.length);
 
-  // Each column to the right plays one register higher than the one before.
-  function registerAt(column) {
-    return REGISTER_ORDER[REGISTER_ORDER.indexOf(tuning.current().register) + column];
-  }
+  // What the surface's columns mean, and how many registers above the
+  // tuning's own the surface reaches (see src/engine/cells.js).
+  const across = release.surface.across;
+  const span = registerSpan(across, surface.columns);
   for (const register of tuning.options().registers) {
-    if (REGISTER_ORDER.indexOf(register) + surface.columns > REGISTER_ORDER.length) {
-      throw new Error(`register "${register}" has no notes for the rightmost column`);
+    if (REGISTER_ORDER.indexOf(register) + span > REGISTER_ORDER.length) {
+      throw new Error(`register "${register}" has no notes for the top of the surface`);
     }
   }
 
@@ -153,10 +154,14 @@ export function start(release) {
         if (moved) state.rest.reset(); // a new note: no vibrato yet
         state.cell = cell;
         state.rest.update(spot.xMm, spot.heightMm, now);
+        const played = cellNotes(notes, current.register, cell, across);
         const wanted = {
           voice: current.voice,
-          register: registerAt(cell.column),
-          note: notes[cell.row],
+          register: played.main.register,
+          note: played.main.note,
+          second: played.second
+            ? { register: played.second.register, note: played.second.note, level: sound.harmony.level }
+            : null,
           gain: press.gainFor(player.contactSize),
           tone: where.tone,
           vibratoCents: state.rest.cents(now),
@@ -204,12 +209,14 @@ export function start(release) {
   function answer(kind) {
     const current = tuning.current();
     const cell = surface.cellAt(lastSpot.xMm, lastSpot.heightMm) || { row: 0, column: 0 };
-    const from = kind === 'scale' ? notes.slice(cell.row) : [notes[cell.row]];
-    const sung = from.map((note) => ({
-      voice: current.voice,
-      register: registerAt(cell.column),
-      note,
-    }));
+    const rows = [];
+    for (let row = cell.row; row < (kind === 'scale' ? notes.length : cell.row + 1); row += 1) {
+      rows.push(row);
+    }
+    const sung = rows.map((row) => {
+      const main = cellNotes(notes, current.register, { row, column: cell.column }, across).main;
+      return { voice: current.voice, register: main.register, note: main.note };
+    });
     const answerSettings = sound.answer;
     return engine.sing(sung, {
       gain: answerSettings.gain,
@@ -288,14 +295,14 @@ export function start(release) {
 
   // ---- loading ----------------------------------------------------------
 
-  // The files one tuning needs: its scale's notes in the register of every
-  // column, the leftmost column first.
+  // The files one tuning needs: its scale's notes in every register the
+  // surface reaches, the tuning's own register first.
   function loadTuning(current) {
     const wanted = scaleNotes(current.scale);
     const first = REGISTER_ORDER.indexOf(current.register);
     let loaded = Promise.resolve();
-    for (let column = 0; column < surface.columns; column += 1) {
-      loaded = loaded.then(() => engine.load(current.voice, REGISTER_ORDER[first + column], wanted));
+    for (let above = 0; above < span; above += 1) {
+      loaded = loaded.then(() => engine.load(current.voice, REGISTER_ORDER[first + above], wanted));
     }
     return loaded;
   }
@@ -315,11 +322,11 @@ export function start(release) {
     const distance = (voice, register) =>
       (voice === first.voice ? 0 : 2) +
       Math.abs(REGISTER_ORDER.indexOf(register) - REGISTER_ORDER.indexOf(first.register));
-    // Every register some column can play.
+    // Every register the surface can reach in some tuning.
     const registers = [];
     for (const register of options.registers) {
-      for (let column = 0; column < surface.columns; column += 1) {
-        const played = REGISTER_ORDER[REGISTER_ORDER.indexOf(register) + column];
+      for (let above = 0; above < span; above += 1) {
+        const played = REGISTER_ORDER[REGISTER_ORDER.indexOf(register) + above];
         if (registers.indexOf(played) < 0) registers.push(played);
       }
     }
@@ -355,7 +362,7 @@ export function start(release) {
     if (lastReading) {
       const { touch, wanted, cell } = lastReading;
       lines.push(
-        `row ${cell.row} column ${cell.column}  ${wanted.register} ${wanted.note}  gain ${wanted.gain.toFixed(2)}  tone ${wanted.tone.toFixed(2)}`,
+        `row ${cell.row} column ${cell.column}  ${wanted.register} ${wanted.note}${wanted.second ? ` + ${wanted.second.register} ${wanted.second.note}` : ''}  gain ${wanted.gain.toFixed(2)}  tone ${wanted.tone.toFixed(2)}`,
         `vibrato ${wanted.vibratoCents.toFixed(1)} c`,
         `contact ${touch.width.toFixed(1)} x ${touch.height.toFixed(1)}  pressure ${touch.pressure.toFixed(2)}  ${touch.kind}`,
       );

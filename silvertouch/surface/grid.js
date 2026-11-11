@@ -1,7 +1,7 @@
 // The grid surface layout: rows as in the stripes layout (the lowest note at
 // the base, the highest at the point), and columns side by side across the
-// egg. Each cell plays its own note: the row gives the note of the scale,
-// and each column to the right plays one octave higher than the one before.
+// egg. The row of a cell gives the note of the scale; what the columns add
+// is the release's choice (see src/engine/cells.js).
 import {
   EGG_HEIGHT_MM,
   EGG_HALF_WIDTH_MM,
@@ -15,7 +15,7 @@ export const GRID_DEFAULTS = {
   // Without it a thumb resting on an edge would flicker between two notes.
   edgeMarginMm: 0.4,
   // The tone of every note, from 0 (dark) to 1 (bright). In this layout
-  // sliding across the egg changes the note, not the tone.
+  // sliding across the egg changes what is played, not the tone.
   tone: 0.7,
 };
 

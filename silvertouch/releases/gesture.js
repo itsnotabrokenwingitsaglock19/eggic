@@ -13,11 +13,13 @@ export default {
   // The shop door is not built yet, and there is no shop address yet.
   shopLink: null,
 
-  // A grid of notes: the rows are the notes of the scale, and the right
-  // column plays one octave higher than the left.
+  // A grid: the rows are the notes of the scale. The left column plays the
+  // row's note alone; each column to the right adds a second note sounding
+  // with it, one scale step higher per column, up to the octave.
   surface: {
     kind: 'grid',
-    columns: 2,
+    columns: 6,
+    across: 'harmony',
     // Where the middle of the egg sits, as a fraction of the visible page's
     // height. 50% is the chosen placement; to confirm on the phone.
     centreAtFraction: 0.5,
@@ -31,8 +33,8 @@ export default {
   tuning: {
     kind: 'gestures',
     scales: ['pentatonic', 'major'],
-    // The egg shows two octaves at once and there are three octaves of
-    // notes, so the register gesture has two positions.
+    // The harmony reaches one octave above the rows and there are three
+    // octaves of notes, so the register gesture has two positions.
     registers: ['down one', 'normal'],
     start: { voice: 'choir2', scale: 'pentatonic', register: 'normal' },
     remember: true, // the tuning is kept on the phone between visits
