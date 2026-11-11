@@ -1,0 +1,32 @@
+/* The page is one fixed screen: nothing scrolls, zooms or can be selected.
+   #F5EFE0 is filled in by the build from the release's settings, so
+   the right colour shows before the app has started. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: fixed;
+  top: 0;
+  left: 0;
+  background: #F5EFE0;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+#egg {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
