@@ -1,24 +1,34 @@
 // Starts a release: reads its settings, picks the parts it names, and
 // connects touch to sound and to the picture.
-import { EGG_HEIGHT_MM } from './surface/egg-outline.js';
+import { EGG_HEIGHT_MM, EGG_WIDEST_HEIGHT_MM } from './surface/egg-outline.js';
 import { LIFE_SIZE_CSS_PX_PER_MM, placeEgg, clientToEgg } from './surface/screen.js';
 import { createStripesSurface } from './surface/stripes.js';
-import { scaleNotes } from './engine/scales.js';
+import { SCALES, scaleNotes } from './engine/scales.js';
 import { soundSettings, createRestDetector, createPressVolume } from './engine/expression.js';
 import { createSoundEngine } from './engine/sound-engine.js';
 import { createFixedTuning } from './tuning/fixed.js';
+import { createGestureTuning } from './tuning/gestures.js';
 import { createSweepLook } from './look/sweep-look.js';
 import { trackTouches } from './input/touches.js';
 import { debugRequested, drawDebug } from './debug.js';
 
 // The parts a release can pick from, by the names used in its settings.
 const SURFACES = { stripes: createStripesSurface };
-const TUNINGS = { fixed: createFixedTuning };
+const TUNINGS = { fixed: createFixedTuning, gestures: createGestureTuning };
 const LOOKS = { sweep: createSweepLook };
 
 function pick(parts, kind, what) {
   if (!parts[kind]) throw new Error(`unknown ${what}: ${kind}`);
   return parts[kind];
+}
+
+// The phone's own storage, or null where it is refused (private browsing).
+function phoneStorage() {
+  try {
+    return window.localStorage;
+  } catch (error) {
+    return null;
+  }
 }
 
 export function start(release) {
@@ -27,19 +37,27 @@ export function start(release) {
   const g = canvas.getContext('2d');
 
   const sound = soundSettings(release.sound);
-  const tuning = pick(TUNINGS, release.tuning.kind, 'tuning')(release.tuning);
+  const tuning = pick(TUNINGS, release.tuning.kind, 'tuning')(release.tuning, {
+    voices: release.voices,
+    storage: phoneStorage(),
+    storageKey: `eggic.${release.id}.tuning`,
+  });
   const look = pick(LOOKS, release.look.kind, 'look')(release.look);
   const engine = createSoundEngine({ basePath: 'notes', settings: sound, meter: debug });
   const press = createPressVolume(sound.press);
+  const makeSurface = pick(SURFACES, release.surface.kind, 'surface');
 
-  // The surface depends on the scale: one band per note.
-  const notes = scaleNotes(tuning.current().scale);
-  const surface = pick(SURFACES, release.surface.kind, 'surface')(release.surface, notes.length);
+  // The notes and the surface depend on the scale: one band per note.
+  let notes = scaleNotes(tuning.current().scale);
+  let surface = makeSurface(release.surface, notes.length);
 
   const view = { width: 0, height: 0, placement: null };
   const playing = new Map(); // touch id -> how that touch is being played
   let frameWanted = false;
   let lastReading = null;
+  // Where the thumb last played, for the sound that answers a gesture.
+  // Before anything is played: the egg's widest point.
+  let lastSpot = { xMm: 0, heightMm: EGG_WIDEST_HEIGHT_MM };
 
   function nowSeconds() {
     return performance.now() / 1000;
@@ -77,15 +95,17 @@ export function start(release) {
     look.draw(g, view);
     if (debug) drawDebug(g, view, surface, debugLines());
     // Keep drawing while a finger is down (vibrato grows while the thumb is
-    // still, with no touch events to announce it) or the highlight is fading.
+    // still, with no touch events to announce it) or the picture is still
+    // changing (the highlight fading, the colour blending).
     if (moving || touches.list().length > 0) requestFrame();
   }
 
   // ---- touch to sound ---------------------------------------------------
 
   // One touch plays at a time. A touch plays if it began on the egg while
-  // no other touch was playing; it keeps that role until it lifts. A touch
-  // that began on the background, or while another was playing, never plays.
+  // no other touch was playing; it keeps that role until it lifts or takes
+  // part in a tuning gesture. A touch that began on the background, or
+  // while another was playing, never plays.
   function playingTouch() {
     for (const touch of touches.list()) {
       const state = playing.get(touch.id);
@@ -129,6 +149,7 @@ export function start(release) {
           vibratoCents: state.rest.cents(now),
         };
         engine.setTouch(player.id, wanted);
+        lastSpot = spot;
         lastReading = { touch: player, wanted, band };
       } else {
         // The thumb has slid off the egg: silence until it comes back.
@@ -141,13 +162,81 @@ export function start(release) {
     look.setThumb(thumb, performance.now());
   }
 
+  // ---- tuning -----------------------------------------------------------
+
+  // Tell the tuning method about the touches. While two fingers make a
+  // tuning gesture neither of them plays, then or later: the note that was
+  // sounding fades out.
+  function updateTuning() {
+    const list = touches.list().map((touch) => {
+      const spot = clientToEgg(view.placement, touch.x, touch.y);
+      const state = playing.get(touch.id);
+      return {
+        id: touch.id,
+        xMm: spot.xMm,
+        heightMm: spot.heightMm,
+        beganOnEgg: !!state && state.beganOnEgg,
+      };
+    });
+    const gesture = tuning.touches(list);
+    for (const id of gesture.pair) {
+      const state = playing.get(id);
+      if (state) state.plays = false;
+    }
+  }
+
+  // The sound that answers a gesture: what the thumb last played, in the
+  // new tuning. A new voice or register: that note, for about half a
+  // second. A new scale: a quick run from that note up to the top.
+  function answer(kind) {
+    const current = tuning.current();
+    const band = Math.max(0, surface.bandAt(lastSpot.heightMm));
+    const from = kind === 'scale' ? notes.slice(band) : [notes[band]];
+    const sung = from.map((note) => ({
+      voice: current.voice,
+      register: current.register,
+      note,
+    }));
+    const answerSettings = sound.answer;
+    return engine.sing(sung, {
+      gain: answerSettings.gain,
+      tone: surface.locate(lastSpot.xMm, lastSpot.heightMm).tone,
+      stepSeconds: Math.min(
+        answerSettings.slowestStepSeconds,
+        Math.max(answerSettings.fastestStepSeconds, answerSettings.runSeconds / sung.length),
+      ),
+      holdSeconds: answerSettings.holdSeconds,
+      fadeSeconds: answerSettings.fadeSeconds,
+    });
+  }
+
+  tuning.onChange((kind, current) => {
+    notes = scaleNotes(current.scale);
+    if (notes.length !== surface.bandCount) {
+      surface = makeSurface(release.surface, notes.length);
+      for (const state of playing.values()) state.band = -1;
+    }
+    look.setTuning(current, performance.now());
+    // The new tuning's files may still be on their way; answer when they
+    // are here, unless the tuning has moved on by then.
+    engine
+      .load(current.voice, current.register, notes)
+      .then(() => {
+        if (tuning.current() === current) answer(kind);
+      })
+      .catch(() => {});
+    requestFrame();
+  });
+
   function onTouch(kind, touch) {
     // Sound may only be started from inside a touch; see engine.unlock.
     if (kind !== 'move') engine.unlock();
     if (kind === 'down') {
       const spot = clientToEgg(view.placement, touch.x, touch.y);
+      const beganOnEgg = surface.locate(spot.xMm, spot.heightMm).inside;
       playing.set(touch.id, {
-        plays: surface.locate(spot.xMm, spot.heightMm).inside && !playingTouch(),
+        beganOnEgg,
+        plays: beganOnEgg && !playingTouch(),
         band: -1,
         rest: createRestDetector(sound.vibrato),
       });
@@ -156,6 +245,7 @@ export function start(release) {
       engine.setTouch(touch.id, null);
       playing.delete(touch.id);
     }
+    updateTuning();
     updateSound(); // at once, not at the next frame, so the note is not late
     requestFrame();
   }
@@ -184,14 +274,50 @@ export function start(release) {
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', resize);
 
+  // ---- loading ----------------------------------------------------------
+
+  // After the starting tuning's files, fetch the rest one voice and register
+  // at a time, nearest tunings first, so a gesture is answered without a
+  // wait. Each lot holds the notes of every scale the release offers.
+  function loadTheRest() {
+    const options = tuning.options();
+    const first = tuning.current();
+    const everyNote = [];
+    for (const scale of options.scales) {
+      for (const note of SCALES[scale]) {
+        if (everyNote.indexOf(note) < 0) everyNote.push(note);
+      }
+    }
+    const distance = (voice, register) =>
+      (voice === first.voice ? 0 : 2) +
+      Math.abs(options.registers.indexOf(register) - options.registers.indexOf(first.register));
+    const lots = [];
+    for (const voice of options.voices) {
+      for (const register of options.registers) lots.push({ voice, register });
+    }
+    lots.sort((a, b) => distance(a.voice, a.register) - distance(b.voice, b.register));
+
+    function next() {
+      const lot = lots.shift();
+      if (!lot) return;
+      engine
+        .load(lot.voice, lot.register, everyNote)
+        .catch(() => {})
+        .then(() => window.setTimeout(next, 150));
+    }
+    next();
+  }
+
   // ---- debug readings ---------------------------------------------------
 
   function debugLines() {
     const status = engine.status();
+    const current = tuning.current();
     const lines = [
       `audio ${status.audio} ${status.sampleRate} Hz  files ${status.loaded} (+${status.loading})`,
-      `level ${engine.level().toFixed(3)}  sounding ${status.sounding.length}`,
+      `level ${engine.level().toFixed(3)}  sounding ${status.sounding.length}${status.singing ? '  singing' : ''}`,
       `view ${view.width} x ${view.height}  ${view.placement.pxPerMm.toFixed(3)} px/mm`,
+      `tuning ${current.voice}, ${current.scale}, ${current.register}  (${tuning.status()})`,
       `touches ${touches.list().length}`,
     ];
     if (lastReading) {
@@ -209,15 +335,21 @@ export function start(release) {
   }
 
   if (debug) {
-    window.eggicDebug = { engine, touches, view, lastReading: () => lastReading };
+    window.eggicDebug = { engine, touches, tuning, view, lastReading: () => lastReading };
   }
 
   // ---- go ---------------------------------------------------------------
 
+  look.setTuning(tuning.current(), performance.now());
   resize();
   const first = tuning.current();
-  engine.load(first.voice, first.register, notes).catch(() => {
-    // The egg stays silent; the debug view shows the error.
-    requestFrame();
-  });
+  engine
+    .load(first.voice, first.register, notes)
+    .catch(() => {
+      // The egg stays silent; the debug view shows the error.
+    })
+    .then(() => {
+      requestFrame();
+      loadTheRest();
+    });
 }

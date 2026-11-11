@@ -4,6 +4,7 @@
 // note is the octave of the first ("c2").
 export const SCALES = {
   pentatonic: ['c', 'd', 'e', 'g', 'a', 'c2'],
+  major: ['c', 'd', 'e', 'f', 'g', 'a', 'b', 'c2'],
 };
 
 // Register positions by their names, and the word the note files
@@ -13,6 +14,9 @@ export const REGISTERS = {
   normal: 'mid',
   'up one': 'high',
 };
+
+// The registers from lowest to highest.
+export const REGISTER_ORDER = ['down one', 'normal', 'up one'];
 
 export function scaleNotes(scale) {
   const notes = SCALES[scale];

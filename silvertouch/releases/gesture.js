@@ -20,16 +20,19 @@ export default {
     centreAtFraction: 0.5,
   },
 
-  // First build: one fixed tuning. The tuning gestures replace this.
-  tuning: {
-    kind: 'fixed',
-    voice: 'choir2',
-    scale: 'pentatonic',
-    register: 'normal',
-  },
+  // The voices of this release, in the order the voice gesture steps
+  // through them. Their note files go into the release's folder.
+  voices: ['choir2', 'glass'],
 
-  // The voices whose note files go into this release's folder.
-  voices: ['choir2'],
+  // One finger plays, two fingers tune (see src/tuning/gestures.js).
+  tuning: {
+    kind: 'gestures',
+    scales: ['pentatonic', 'major'],
+    start: { voice: 'choir2', scale: 'pentatonic', register: 'normal' },
+    remember: true, // the tuning is kept on the phone between visits
+    slideMm: 6, // stand-in: how far two fingers slide before it counts
+    pinchMm: 7, // stand-in: how much a pinch or spread must change
+  },
 
   // Nothing overridden: the instrument's own sound settings apply.
   sound: {},
@@ -38,9 +41,21 @@ export default {
     kind: 'sweep',
     background: '#F5EFE0', // cream; stand-in, the exact colour is open
     sweep: {
-      light: '#DDDFE3', // stand-in
-      dark: '#8B9098', // stand-in
       angleDeg: 35, // stand-in; 0 runs straight down, 90 left to right
+    },
+    // The egg's colour follows the tuning.
+    colours: {
+      // Voice: the colour family, as the sweep's light and dark ends.
+      families: {
+        choir2: { light: '#DDDFE3', dark: '#8B9098' }, // silver; stand-in
+        glass: { light: '#D2E7F2', dark: '#6A9FC4' }, // pale blue; stand-in
+      },
+      // Scale: how strong the sweep's contrast is. Stand-ins.
+      contrast: { pentatonic: 1, major: 1.35 },
+      // Register: how much lighter (towards white) or darker (towards
+      // black) the egg is. Stand-ins.
+      registerShift: { 'down one': -0.16, normal: 0, 'up one': 0.16 },
+      blendMs: 330, // the colour blends over to a new tuning's in this time
     },
     highlight: {
       enabled: true,

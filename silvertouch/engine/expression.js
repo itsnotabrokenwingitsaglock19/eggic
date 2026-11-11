@@ -33,6 +33,16 @@ export const SOUND_DEFAULTS = {
     brightHz: 10000, // filter at its right edge
     smoothingSeconds: 0.05,
   },
+  // The sound that answers a tuning gesture: one note, or for a new scale a
+  // quick run of notes up to the top of the egg.
+  answer: {
+    gain: 0.8,
+    holdSeconds: 0.25, // how long the (last) note holds before it fades
+    fadeSeconds: 0.25, // the soft fade at the end
+    runSeconds: 1.0, // about how long a run takes
+    fastestStepSeconds: 0.11, // a run's notes are never closer than this
+    slowestStepSeconds: 0.18, // nor further apart than this
+  },
 };
 
 // SOUND_DEFAULTS with a release's overrides laid over it, one level deep.

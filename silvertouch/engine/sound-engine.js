@@ -30,6 +30,7 @@ export function createSoundEngine({ basePath, settings, meter }) {
   const buffers = new Map(); // note file address -> decoded sound
   const loading = new Map(); // note file address -> promise
   const voices = new Map(); // touch id -> the sound of that touch
+  let song = null; // the notes being sung by sing(), if any
 
   function ensureContext() {
     if (context || !AudioContextClass) return context;
@@ -249,10 +250,82 @@ export function createSoundEngine({ basePath, settings, meter }) {
     aim(live, 'vibrato', live.vibratoDepth.gain, centsToRate(wanted.vibratoCents), 0.03, now);
   }
 
+  function stopSong() {
+    if (!song) return;
+    const now = context.currentTime;
+    song.fade.gain.cancelScheduledValues(now);
+    song.fade.gain.setTargetAtTime(0, now, 0.02);
+    for (const source of song.sources) {
+      try {
+        source.stop(now + 0.2);
+      } catch (error) {
+        // Already stopped.
+      }
+    }
+    song = null;
+  }
+
+  // Sing a few notes without a touch: the sound that answers a tuning
+  // gesture. `notes` is a list of { voice, register, note }, sung one after
+  // the other, `stepSeconds` apart, gliding from each to the next; the last
+  // one holds for `holdSeconds` and fades away softly. Answers false if it
+  // cannot sing yet (files still loading, or no sound allowed).
+  function sing(notes, { gain, tone, stepSeconds, holdSeconds, fadeSeconds }) {
+    if (!context || context.state !== 'running') return false;
+    const found = notes.map((note) =>
+      buffers.get(noteFile(basePath, note.voice, note.register, note.note)),
+    );
+    if (found.length === 0 || found.some((buffer) => !buffer)) return false;
+    stopSong();
+
+    const start = context.currentTime + 0.02;
+    const end = start + (found.length - 1) * stepSeconds + holdSeconds;
+    const glide = settings.glideSeconds / 3;
+
+    const filter = context.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 0.7;
+    filter.frequency.value = toneToHz(tone, settings.tone);
+    const fade = context.createGain();
+    fade.gain.setValueAtTime(0, start);
+    fade.gain.setTargetAtTime(gain, start, settings.attackSeconds);
+    fade.gain.setTargetAtTime(0, end, fadeSeconds / 3);
+    filter.connect(fade);
+    fade.connect(master);
+
+    const sources = found.map((buffer, index) => {
+      const begins = start + index * stepSeconds;
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      const level = context.createGain();
+      level.gain.setValueAtTime(index === 0 ? 1 : 0, start);
+      if (index > 0) level.gain.setTargetAtTime(1, begins, glide);
+      if (index < found.length - 1) level.gain.setTargetAtTime(0, begins + stepSeconds, glide);
+      source.connect(level);
+      level.connect(filter);
+      source.start(begins);
+      source.stop(end + fadeSeconds * 3);
+      return source;
+    });
+    const mine = { fade, sources };
+    sources[sources.length - 1].onended = () => {
+      try {
+        fade.disconnect();
+      } catch (error) {
+        // Already disconnected.
+      }
+      if (song === mine) song = null;
+    };
+    song = mine;
+    return true;
+  }
+
   // Silence everything: used when the page is hidden or loses the touches,
   // so no note can be left sounding.
   function stopAll() {
     for (const id of Array.from(voices.keys())) setTouch(id, null);
+    if (context) stopSong();
   }
 
   // The loudness of what is playing, 0 for silence. Only with `meter`.
@@ -278,9 +351,10 @@ export function createSoundEngine({ basePath, settings, meter }) {
       loaded: buffers.size,
       loading: loading.size,
       sounding: Array.from(voices.values()).map((voice) => voice.address),
+      singing: song !== null,
       error: lastError,
     };
   }
 
-  return { unlock, load, setTouch, stopAll, level, status };
+  return { unlock, load, setTouch, sing, stopAll, level, status };
 }

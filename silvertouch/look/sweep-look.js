@@ -1,19 +1,14 @@
-// The look of the gesture-tuned egg: flat, the exact outline filled with one
-// soft gradient (the sweep), no edge line, and a bright soft streak under
-// the playing thumb (the highlight). The highlight is a separate layer that
-// a release can switch off.
+// The "sweep" look: a flat egg, the exact outline filled with one soft
+// gradient (the sweep), no edge line, and a bright soft streak under the
+// playing thumb (the highlight). The highlight is a separate layer that a
+// release can switch off. The sweep's colour follows the tuning and blends
+// from one tuning's colour to the next.
 import {
   EGG_HEIGHT_MM,
   EGG_WIDTH_MM,
   outlinePoints,
 } from '../surface/egg-outline.js';
-
-function hexToRgb(hex) {
-  const match = /^#([0-9a-f]{6})$/i.exec(hex);
-  if (!match) throw new Error(`colour must be written #RRGGBB: ${hex}`);
-  const value = parseInt(match[1], 16);
-  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-}
+import { hexToRgb, mix, rgbText, tuningColours } from './colour.js';
 
 export function createSweepLook(settings) {
   const outline = outlinePoints();
@@ -29,6 +24,10 @@ export function createSweepLook(settings) {
   let heightMm = 0;
   let lastMs = null;
 
+  // The sweep's colour: what is shown now, and the blend under way, if any.
+  let shown = null; // { light, dark }
+  let blend = null; // { from, to, startMs }
+
   function traceEgg(g, placement) {
     g.beginPath();
     for (let i = 0; i < outline.length; i += 1) {
@@ -38,6 +37,17 @@ export function createSweepLook(settings) {
       else g.lineTo(x, y);
     }
     g.closePath();
+  }
+
+  // Tell the look the tuning. The first time, its colour shows at once;
+  // after that, the colour blends over to the new tuning's.
+  function setTuning(tuning, nowMs) {
+    const to = tuningColours(settings.colours, tuning);
+    if (!shown) {
+      shown = to;
+      return;
+    }
+    blend = { from: shown, to, startMs: nowMs };
   }
 
   // Tell the look where the playing thumb is (null when no thumb plays).
@@ -52,8 +62,9 @@ export function createSweepLook(settings) {
     if (lastMs === null) lastMs = nowMs;
   }
 
-  // Move the highlight's visibility towards its goal. Returns true while it
-  // is still changing, so the caller knows to keep drawing.
+  // Move the highlight and the colour blend on to the time given. Answers
+  // true while either is still changing, so the caller knows to keep
+  // drawing.
   function step(nowMs) {
     const elapsed = lastMs === null ? 0 : Math.max(0, nowMs - lastMs);
     lastMs = nowMs;
@@ -62,11 +73,19 @@ export function createSweepLook(settings) {
     } else if (strength > goal) {
       strength = Math.max(goal, strength - elapsed / highlight.fadeOutMs);
     }
-    if (strength === goal) {
-      lastMs = null; // settled: the next change starts its fade afresh
-      return false;
+    const fading = strength !== goal;
+    if (!fading) lastMs = null; // settled: the next change starts its fade afresh
+
+    if (blend) {
+      const amount = Math.min(1, Math.max(0, (nowMs - blend.startMs) / settings.colours.blendMs));
+      const eased = amount * amount * (3 - 2 * amount);
+      shown = {
+        light: mix(blend.from.light, blend.to.light, eased),
+        dark: mix(blend.from.dark, blend.to.dark, eased),
+      };
+      if (amount >= 1) blend = null;
     }
-    return true;
+    return fading || blend !== null;
   }
 
   function drawSweep(g, placement) {
@@ -84,8 +103,8 @@ export function createSweepLook(settings) {
       placement.centreX + dx * reach,
       placement.centreY + dy * reach,
     );
-    gradient.addColorStop(0, sweep.light);
-    gradient.addColorStop(1, sweep.dark);
+    gradient.addColorStop(0, rgbText(shown.light));
+    gradient.addColorStop(1, rgbText(shown.dark));
     traceEgg(g, placement);
     g.fillStyle = gradient;
     g.fill();
@@ -119,9 +138,10 @@ export function createSweepLook(settings) {
   function draw(g, view) {
     g.fillStyle = settings.background;
     g.fillRect(0, 0, view.width, view.height);
+    if (!shown) return;
     drawSweep(g, view.placement);
     drawHighlight(g, view.placement);
   }
 
-  return { setThumb, step, draw, traceEgg };
+  return { setTuning, setThumb, step, draw };
 }
