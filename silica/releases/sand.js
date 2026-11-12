@@ -3,8 +3,8 @@
 // goes by its working label, "the sand egg", and the id `sand`. Nothing
 // here is shown to a user except `title`.
 //
-// This is the sand test page: it has no sound yet. Values marked "stand-in"
-// are starting points to be set by eye on the phone.
+// Values marked "stand-in" are starting points to be set by eye and ear on
+// the phone.
 
 export default {
   id: 'sand',
@@ -14,14 +14,39 @@ export default {
   // The shop door is not built yet, and there is no shop address yet.
   shopLink: null,
 
-  // No sound yet, so no note files go into the release's folder.
-  voices: [],
+  // Its voices, in the order the voice gesture steps through them. Their
+  // note files go into the release's folder.
+  voices: ['choir2', 'glass'],
 
+  // The notes lie where the egg was at the start, on the grid of the
+  // gesture-tuned egg: the rows are the notes of the scale; the left
+  // column plays the row's note alone, and each column to the right adds a
+  // second note sounding with it, one scale step higher per column.
   surface: {
+    kind: 'grid',
+    columns: 6,
+    across: 'harmony',
     // Where the middle of the egg sits, as a fraction of the visible page's
     // height.
     centreAtFraction: 0.5,
   },
+
+  // One finger plays and pushes sand; two fingers tune and push none (see
+  // src/tuning/gestures.js). The same gestures as the gesture-tuned egg's.
+  tuning: {
+    kind: 'gestures',
+    scales: ['pentatonic', 'major'],
+    // The harmony reaches one octave above the rows and there are three
+    // octaves of notes, so the register gesture has two positions.
+    registers: ['down one', 'normal'],
+    start: { voice: 'choir2', scale: 'pentatonic', register: 'normal' },
+    remember: true, // the tuning is kept on the phone between visits
+    slideMm: 6, // stand-in: how far two fingers slide before it counts
+    pinchMm: 7, // stand-in: how much a pinch or spread must change
+  },
+
+  // Nothing overridden: the instrument's own sound settings apply.
+  sound: {},
 
   sand: {
     // The field the sand can move in, centred on the egg. It is larger than
@@ -35,6 +60,11 @@ export default {
     reposeSlope: 0.65, // sand steeper than this slides (about 33 degrees)
     stillMm: 0.0005, // movement smaller than this counts as lying still
     slumpPasses: 6, // how much sliding is worked out per frame
+    // Stand-ins: how long the sand waits after a finger lands before it
+    // moves, and how far the finger may travel before the wait ends early.
+    // A second finger that lands meanwhile begins a tuning gesture, and
+    // the first has left no mark (src/sand/fingers.js).
+    land: { waitMs: 80, travelMm: 3 },
 
     // What a finger does to the sand. All stand-ins.
     finger: {
@@ -45,15 +75,6 @@ export default {
       forward: 0.15, // how much the sand is carried ahead instead of aside
       spread: 0.5, // how far its way is turned to either side, in radians
       throwMm: 0.5, // how far beyond the rim the sand lands
-    },
-
-    // The rake: two fingers carry a row of tines between them, and each
-    // tine combs a thin groove (see src/sand/rake.js). All stand-ins.
-    rake: {
-      spacingMm: 2.2, // from one tine to the next
-      clearMm: 4.5, // from a finger's middle to the nearest tine
-      mostTines: 16,
-      tine: { radiusMm: 0.6, flatPart: 0.5, floorMm: 0.25, rimMm: 1.0, forward: 0.1, spread: 0.3, throwMm: 0.3 },
     },
   },
 

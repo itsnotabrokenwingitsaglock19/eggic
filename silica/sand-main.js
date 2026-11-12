@@ -1,13 +1,15 @@
 // Starts the sand egg: makes the field of sand in the shape of the egg,
-// draws it, lets every finger on the screen push the sand, and runs the
-// hidden UI with the broom that puts the sand back. This release is put
-// together differently from the ones that start in main.js, so it has its
-// own starting file.
+// draws it, lets a finger on the screen push the sand and play the notes
+// of the egg that was there (src/instrument.js), lets two fingers tune the
+// sound, and runs the hidden UI with the broom that puts the sand back.
+// This release is put together differently from the ones that start in
+// main.js, so it has its own starting file.
 import { EGG_HEIGHT_MM, isInsideEgg } from './surface/egg-outline.js';
 import { LIFE_SIZE_CSS_PX_PER_MM, placeEgg } from './surface/screen.js';
 import { trackTouches } from './input/touches.js';
+import { createInstrument } from './instrument.js';
 import { createSandField } from './sand/field.js';
-import { tineShares, tinePoints } from './sand/rake.js';
+import { createSandFingers } from './sand/fingers.js';
 import { createSandLook } from './look/sand-look.js';
 import { createHiddenUi, drawHiddenUi } from './ui/hidden-ui.js';
 import { debugRequested, drawReadings } from './debug.js';
@@ -26,6 +28,10 @@ export function start(release) {
     isInsideEgg(spot.x, EGG_HEIGHT_MM / 2 - spot.y),
   );
   const startVolume = field.volume();
+  // The notes stay where the egg was, whatever the sand does. A touch
+  // plays wherever it began, while it is inside the egg's outline; and any
+  // two fingers tune, since the sand no longer shows where the egg ends.
+  const instrument = createInstrument(release, { debug, begins: 'anywhere' });
 
   const view = { width: 0, height: 0, placement: null };
   let frameWanted = false;
@@ -47,11 +53,7 @@ export function start(release) {
     });
     // The egg may have moved on the screen: the fingers that are down are
     // placed anew, so that the move itself pushes no sand.
-    for (const touch of touches.list()) {
-      if (fingers.has(touch.id)) fingers.set(touch.id, onField(touch));
-    }
-    rake = null;
-    if (!reset) updateRake();
+    for (const touch of touches.list()) fingers.place(touch.id, onField(touch));
     requestFrame();
   }
 
@@ -64,6 +66,8 @@ export function start(release) {
   function frame(nowMs) {
     frameWanted = false;
     frames += 1;
+    instrument.update(touches.list(), view.placement);
+    fingers.tick(nowMs);
     const count = touches.list().length;
     const uiBusy = ui.tick(nowMs, count);
     let moving = false;
@@ -78,7 +82,8 @@ export function start(release) {
     drawHiddenUi(g, view.placement, ui, release.hiddenUi, nowMs);
     if (debug) drawReadings(g, readings());
     // Keep drawing while the sand moves, while a finger is down (a long
-    // press is told by time alone) and while the hidden UI is showing.
+    // press is told by time alone, and so is the vibrato of a resting
+    // thumb) and while the hidden UI is showing.
     if (moving || uiBusy || count > 0) requestFrame();
   }
 
@@ -112,7 +117,7 @@ export function start(release) {
     look.update();
   }
 
-  // ---- touch to sand -----------------------------------------------------
+  // ---- touch to sand and to sound ----------------------------------------
 
   // Where a touch is on the field, in millimetres from the egg's middle.
   function onField(touch) {
@@ -122,83 +127,76 @@ export function start(release) {
     };
   }
 
-  // Every finger pushes sand, wherever it is and wherever it began: a press
-  // where it lands, then a groove along its way.
-  const fingers = new Map(); // touch id -> where that finger last was
-  // While two fingers are down, the first two carry the rake between them.
-  let rake = null; // { ids: [first, second], shares, points }
+  // A finger pushes sand, wherever it is and wherever it began: a press
+  // where it lands, then a groove along its way (src/sand/fingers.js).
+  // While the sand is being put back, fingers do not push it.
+  const fingers = createSandFingers(release.sand.land, (fromX, fromY, toX, toY) => {
+    if (!reset) field.push(fromX, fromY, toX, toY, release.sand.finger);
+  });
 
-  function updateRake() {
-    if (rake && !(fingers.has(rake.ids[0]) && fingers.has(rake.ids[1]))) rake = null;
-    if (!rake) {
-      const ids = touches
-        .list()
-        .map((touch) => touch.id)
-        .filter((id) => fingers.has(id));
-      if (ids.length < 2) return;
-      const a = fingers.get(ids[0]);
-      const b = fingers.get(ids[1]);
-      const shares = tineShares(Math.hypot(b.x - a.x, b.y - a.y), release.sand.rake);
-      rake = { ids: [ids[0], ids[1]], shares, points: tinePoints(a, b, shares) };
-      return;
+  // Fingers that tune push no sand, from the moment they begin to tune
+  // until they lift.
+  function tuningFingersPushNoSand() {
+    for (const touch of touches.list()) {
+      if (instrument.tunes(touch.id)) fingers.drop(touch.id);
     }
-    const points = tinePoints(fingers.get(rake.ids[0]), fingers.get(rake.ids[1]), rake.shares);
-    points.forEach((point, k) => {
-      const last = rake.points[k];
-      if (last.x !== point.x || last.y !== point.y) {
-        field.push(last.x, last.y, point.x, point.y, release.sand.rake.tine);
-      }
-    });
-    rake.points = points;
   }
 
   function onTouch(kind, touch) {
     const spot = onField(touch);
     const nowMs = performance.now();
     if (kind === 'down') {
-      // A touch on an icon of the open hidden UI is not for the sand.
+      // A touch on an icon of the open hidden UI is not for the sand, nor
+      // for the instrument.
       const onIcon = ui.down(touch.id, spot, touches.list().length === 1, nowMs);
-      if (!onIcon) {
-        if (!reset) field.push(spot.x, spot.y, spot.x, spot.y, release.sand.finger);
-        fingers.set(touch.id, spot);
-      }
+      instrument.touch(kind, touch, touches.list(), view.placement, !onIcon);
+      if (!onIcon) fingers.down(touch.id, spot, nowMs);
+      tuningFingersPushNoSand();
     } else if (kind === 'move') {
       ui.move(touch.id, spot);
-      const last = fingers.get(touch.id);
-      if (last) {
-        if (!reset) field.push(last.x, last.y, spot.x, spot.y, release.sand.finger);
-        fingers.set(touch.id, spot);
-      }
+      instrument.touch(kind, touch, touches.list(), view.placement);
+      tuningFingersPushNoSand();
+      fingers.move(touch.id, spot, nowMs);
     } else {
-      fingers.delete(touch.id);
+      instrument.touch(kind, touch, touches.list(), view.placement);
+      tuningFingersPushNoSand();
+      fingers.up(touch.id);
       const tapped = ui.up(touch.id, nowMs, touch.cancelled);
       if (tapped === 'broom' && !reset) reset = { startMs: null, frame: 0, done: 0 };
     }
-    if (!reset) updateRake();
-    else rake = null;
     requestFrame();
   }
 
   const touches = trackTouches(canvas, onTouch);
 
   // When the page is hidden, loses focus or is left, every touch is
-  // forgotten, so that no finger is taken to be still on the screen.
-  const forget = () => touches.clear();
+  // forgotten, so that no finger is taken to be still on the screen, and
+  // every sound is stopped, so that no note is left sounding.
+  const forget = () => {
+    touches.clear();
+    instrument.silence();
+  };
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) forget();
   });
   window.addEventListener('pagehide', forget);
   window.addEventListener('blur', forget);
 
+  // Some browsers only allow sound from the end of a touch, or from a click
+  // or a key, so those count as well.
+  for (const name of ['touchend', 'click', 'keydown']) {
+    document.addEventListener(name, () => instrument.unlock());
+  }
+
   // ---- debug readings (only with ?debug in the address) ------------------
 
   function readings() {
     return [
       `view ${view.width} x ${view.height}  ${view.placement.pxPerMm.toFixed(3)} px/mm`,
-      `touches ${touches.list().length}${rake ? `  rake of ${rake.shares.length}` : ''}`,
+      `touches ${touches.list().length}`,
       `hidden UI ${ui.isOpen() ? 'open' : 'closed'}${reset ? '  resetting' : ''}`,
       `sand ${field.volume().toFixed(1)} mm3 (start ${startVolume.toFixed(1)})${field.isMoving() ? '  moving' : ''}`,
-    ];
+    ].concat(instrument.readings());
   }
 
   if (debug) {
@@ -210,11 +208,14 @@ export function start(release) {
       touches,
       resetting: () => reset !== null,
       frames: () => frames,
-      rakeTines: () => (rake ? rake.shares.length : 0),
+      engine: instrument.engine,
+      tuning: instrument.tuning,
+      lastReading: instrument.lastReading,
     };
   }
 
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', resize);
   resize();
+  instrument.start().then(requestFrame);
 }
