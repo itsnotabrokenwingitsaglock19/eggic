@@ -20,7 +20,10 @@ function joined(a, b, roundMm) {
 const clamp = (t) => Math.min(1, Math.max(0, t));
 
 // settings: { sideMm, longestStepMs, land: { waitMs, travelMm },
-// push: { insideMm, headMm, joinMm, rangeMm, followMs, backMs } }.
+// push: { insideMm, headMm, joinMm, rangeMm, followMs, backMs },
+// swell: { mm, riseMs, fallMs } }. `swell` may be left out: with it, the
+// whole pool stands out a very little beyond the egg's outline, all round,
+// while a finger presses on it, as if the liquid had nowhere else to go.
 export function createShape(settings) {
   const { land, push } = settings;
   const egg = createEggDistance(settings.sideMm);
@@ -29,6 +32,8 @@ export function createShape(settings) {
   const fallen = []; // where liquid pushed out of the egg has just been let go
   let gathered = []; // the swellings, as a list
   let changed = null; // the box within which the pool's edge moved in the last step
+  let round = 0; // how far the whole pool stands out beyond the outline, all round, mm
+  let pressingNow = 0; // how many fingers press on the liquid
   let lastMs = null;
   let stamp = 0; // goes up whenever the pool's edge may have moved
 
@@ -56,6 +61,7 @@ export function createShape(settings) {
     const reach = push.headMm + push.joinMm;
     changed = null;
 
+    pressingNow = 0;
     for (const [id, finger] of fingers) {
       if (finger.off) continue;
       if (finger.waiting) {
@@ -66,7 +72,10 @@ export function createShape(settings) {
       // Only a finger that has been on the liquid moves it.
       const at = near(finger);
       const depth = egg.at(at.x, at.h);
-      if (depth > 0) finger.wasInside = true;
+      if (depth > 0) {
+        finger.wasInside = true;
+        pressingNow += 1;
+      }
       if (!finger.wasInside) continue;
       // The liquid comes with the finger as far as just inside its own
       // edge, and lets go as the finger goes on beyond the outline.
@@ -112,6 +121,15 @@ export function createShape(settings) {
     }
     gathered = Array.from(swellings.values()).filter((swelling) => swelling.strength > 0);
     if (moved) stamp += 1;
+    // The whole pool swells a very little while it is pressed, and draws back after.
+    if (settings.swell) {
+      const want = pressingNow > 0 ? settings.swell.mm : 0;
+      if (round !== want) {
+        round += (want - round) * (1 - Math.exp(-elapsed / (want > round ? settings.swell.riseMs : settings.swell.fallMs)));
+        if (Math.abs(want - round) < 0.004) round = want;
+        moved = true;
+      }
+    }
     return moved;
   }
 
@@ -141,7 +159,7 @@ export function createShape(settings) {
     step,
     // How far inside the liquid a place is: positive inside, negative outside.
     phiAt(x, h) {
-      let phi = egg.at(x, h);
+      let phi = egg.at(x, h) + round;
       for (let k = 0; k < gathered.length; k += 1) {
         const swelling = gathered[k];
         const blob = push.headMm * swelling.strength - Math.hypot(x - swelling.tip.x, h - swelling.tip.h);
@@ -163,6 +181,8 @@ export function createShape(settings) {
       return fallen.splice(0, fallen.length);
     },
     stamp: () => stamp,
+    // How far the whole pool stands out beyond the egg's outline, all round, this moment.
+    roundMm: () => round,
     // The box within which the pool's edge moved in the last step ({ minX, maxX, minH, maxH }), or null.
     changed: () => changed,
     // Beyond this distance from a swelling's tip, the pool's edge is the egg's outline.

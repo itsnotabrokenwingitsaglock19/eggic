@@ -1,7 +1,8 @@
 // Settings of the release named lucasite: a pool of quicksilver in the shape of
-// the egg. A touch sends ripples over its mirror surface, which travel,
-// turn back at the egg's edge and die down; a finger that comes to the edge
-// pushes it out a little. Nothing here is shown to a user except `title`.
+// the egg. A touch presses into its mirror surface: the liquid it displaces
+// stands up round the finger, the whole pool swells a very little, and
+// ripples travel out, turn back in part at the egg's edge and die down. A
+// finger that comes to the edge pushes it out a little. Nothing here is shown to a user except `title`.
 // Values marked "stand-in" are starting points to be set by eye and ear on
 // the phone.
 
@@ -42,7 +43,7 @@ export default {
 
   // The liquid. Lengths are millimetres, times milliseconds. All stand-ins.
   pool: {
-    sideMm: 7, // how far beyond the egg, on every side, the liquid and its shadow are followed
+    sideMm: 8, // how far beyond the egg, on every side, the liquid and its shadow are followed
     longestStepMs: 100, // a longer gap between two frames counts as this
 
     // A finger waits this long after landing, or until it has travelled
@@ -60,29 +61,41 @@ export default {
       backMs: 260, // how quickly it falls back
     },
 
+    // While a finger presses on the liquid the whole pool stands out this
+    // far beyond the egg's outline, all round, as if the liquid had nowhere
+    // else to go; it draws back when the finger has gone.
+    swell: { mm: 0.4, riseMs: 180, fallMs: 450 },
+
     // The surface, which carries waves.
     surface: {
       cellsPerMm: 2, // how fine the surface is worked out
       edgeMm: 0.4, // the surface ends this far inside the pool's edge
-      speedMmPerS: 85, // how fast a wave travels
-      calmS: 2.1, // a wave has faded to about a third after this many seconds
+      speedMmPerS: 70, // how fast a wave travels
+      calmS: 1.8, // a wave has faded to about a third after this many seconds
       levelHz: 0.9, // how strongly the surface is drawn back to level
       stillMm: 0.05, // waves smaller than this cannot be seen, and count as none
       stilledMs: 300, // the broom stills the surface within this time
       longestStepMs: 50,
-      thick: { everyMs: 33, share: 0.5 }, // how thick the liquid is: its smallest ripples melt away
+      thick: { everyMs: 27, share: 0.5 }, // how thick the liquid is: its smallest ripples melt away
+      // Within bandMm of its edge the liquid soaks a wave up, so that only
+      // part of it turns back: the shorter calmS, the less.
+      soak: { bandMm: 3, calmS: 0.17 },
       // A finger presses a dimple into the surface.
       finger: {
-        widthMm: 3.4,
-        deepMm: 0.85, // under the firmest press
+        widthMm: 4.2,
+        deepMm: 1.2, // under the firmest press
         lightest: 0.6, // the share of that depth under the lightest press
-        hz: 7, // how quickly the surface gives way under the finger
+        hz: 5.9, // how quickly the surface gives way under the finger
+        rim: 0.34, // the share of the displaced liquid that stands up in a ring round the finger
+        rimWide: 1.8, // the ring is this many times as wide as the dimple
+        wake: 6, // how strongly a moving finger piles liquid up ahead of it and leaves a trough behind
+        fastest: 150, // a finger counts as moving no faster than this, mm a second
       },
     },
 
     waves: {
       // A slide of two fingers sends a swell across the pool, the way they slid.
-      swell: { fromMm: 22, tallMm: 0.8, widthMm: 4 },
+      swell: { fromMm: 22, tallMm: 0.88, widthMm: 4.8 },
       // A spread sends a ring out from the middle; a pinch, a ring in from ringFromMm away.
       ring: { outMmPerS: 18, widthMm: 4, inFromMm: 17, inTallMm: 0.35 },
       // Each cell the answering sound sings gets a small ripple.
@@ -99,10 +112,11 @@ export default {
     shine: '#FFFFFF',
     pxPerMm: [4, 3], // the picture is worked out this fine; the second is used if the phone is slow
     slowFrameMs: 14, // a frame that takes longer than this, on average, is slow
-    ripple: 3.6, // how strongly a ripple shows, against its true height
+    ripple: 3.4, // how strongly a ripple shows, against its true height
     // The liquid rounds over within rimMm of its edge, where it stands
-    // tallMm high; its edge is drawn softMm soft.
-    edge: { rimMm: 1.3, tallMm: 0.3, softMm: 0.3 },
+    // tallMm high; its edge is drawn softMm soft; a ripple shows less and
+    // less within rippleFadeMm of the edge.
+    edge: { rimMm: 1.3, tallMm: 0.3, softMm: 0.3, rippleFadeMm: 2.3 },
     // What the liquid mirrors. Ways are (x, up the screen, towards the eye).
     sky: { overhead: 0.82, low: 0.56 }, // how bright, straight above and near the horizon
     window: { towards: { x: -0.38, up: 0.62, front: 0.68 }, from: 0.8, to: 0.93, strength: 0.35 }, // the light: upper left

@@ -44,6 +44,7 @@ export function createPainter(look, shape, surface, size) {
   const room = new Int32Array(count);
   let liquid = room.subarray(0, 0); // the pixels with liquid in them
   let stamp = -1;
+  let round = 0; // how far the whole pool stood out when the arrays for now were made
   let changed = true; // whether the arrays for now differ from those at rest
   const background = rgb(look.background);
   const tint = rgb(look.liquid);
@@ -64,7 +65,7 @@ export function createPainter(look, shape, surface, size) {
     into.phi[at] = inside;
     const t = inside >= rimMm ? 0 : 1 - Math.max(0, inside) / rimMm;
     into.still[at] = inside > 0 ? tallMm * (1 - t * t) : 0;
-    into.shows[at] = inside > 0 ? smooth(0, rimMm * 1.2, inside) * look.ripple : 0;
+    into.shows[at] = inside > 0 ? smooth(0, look.edge.rippleFadeMm, inside) * look.ripple : 0;
   }
   // The background at one pixel: a soft shadow to the lower right of the
   // liquid, and a faint shade all round it, so that its light side keeps
@@ -100,20 +101,36 @@ export function createPainter(look, shape, surface, size) {
   // What does not change while the pool's edge stays where it is.
   function lay() {
     stamp = shape.stamp();
+    round = shape.roundMm();
     const out = shape.swellings().filter((swelling) => swelling.outMm > 0);
-    if (changed || out.length) {
+    let found = rest.liquid.length;
+    if (round !== 0) {
+      // The whole pool stands out a little, all round: every place is that much further inside.
+      found = 0;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const at = y * width + x;
+          const inside = rest.phi[at] + round;
+          form(now, at, inside);
+          if (hasLiquid(inside, x, y)) {
+            room[found] = at;
+            found += 1;
+          }
+        }
+      }
+      tall.fill(0);
+      changed = true;
+    } else if (changed || out.length) {
       phi.set(rest.phi);
       still.set(rest.still);
       shows.set(rest.shows);
       ground.set(rest.ground);
       room.set(rest.liquid);
-      liquid = room.subarray(0, rest.liquid.length);
       tall.fill(0); // nothing stands where the liquid has left
       changed = false;
     }
-    if (!out.length) return;
-    changed = true;
-    let found = rest.liquid.length;
+    liquid = room.subarray(0, found);
+    if (out.length) changed = true;
     for (const swelling of out) {
       // Near the swelling the liquid is worked out afresh; further away
       // nothing that shows has changed.
@@ -135,16 +152,21 @@ export function createPainter(look, shape, surface, size) {
           }
         }
       }
-      const more = Math.max(Math.abs(shadowX), Math.abs(shadowY)) + 1;
-      for (let y = Math.max(0, top - more); y <= Math.min(height - 1, bottom + more); y += 1) {
-        for (let x = Math.max(0, left - more); x <= Math.min(width - 1, right + more); x += 1) shade(now, x, y);
+      if (round === 0) {
+        const more = Math.max(Math.abs(shadowX), Math.abs(shadowY)) + 1;
+        for (let y = Math.max(0, top - more); y <= Math.min(height - 1, bottom + more); y += 1) {
+          for (let x = Math.max(0, left - more); x <= Math.min(width - 1, right + more); x += 1) shade(now, x, y);
+        }
       }
     }
     liquid = room.subarray(0, found);
+    if (round !== 0) {
+      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) shade(now, x, y);
+    }
   }
 
   function paint(pixels) {
-    if (stamp !== shape.stamp()) lay();
+    if (stamp !== shape.stamp() || round !== shape.roundMm()) lay();
     for (let at = 0; at < count; at += 1) {
       pixels[at * 4] = ground[at * 3];
       pixels[at * 4 + 1] = ground[at * 3 + 1];

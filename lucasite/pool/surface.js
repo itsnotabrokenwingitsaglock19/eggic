@@ -8,8 +8,10 @@
 // base. Heights of the surface are millimetres too.
 
 // settings: { cellsPerMm, speedMmPerS, calmS, levelHz, stillMm,
-// longestStepMs, thick: { everyMs, share }, finger: { widthMm, deepMm, hz },
-// stilledMs }. bounds: the field the liquid can be in.
+// longestStepMs, thick: { everyMs, share }, finger: { widthMm, deepMm,
+// lightest, hz, rim, rimWide, wake }, soak: { bandMm, calmS }, stilledMs }.
+// `soak` and the finger's `rim` and `wake` may be left out.
+// bounds: the field the liquid can be in.
 export function createSurface(settings, bounds) {
   const { cellsPerMm, speedMmPerS, finger, thick } = settings;
   const width = Math.ceil((bounds.maxX - bounds.minX) * cellsPerMm);
@@ -18,6 +20,7 @@ export function createSurface(settings, bounds) {
   const v = new Float32Array(width * height); // how fast it rises, mm/s
   const spare = new Float32Array(width * height);
   const wet = new Uint8Array(width * height); // where there is liquid
+  const soaks = settings.soak ? new Float32Array(width * height) : null; // how strongly the liquid's edge soaks a wave up, 0 to 1
   const room = new Int32Array(width * height);
   let cells = room.subarray(0, 0); // the same, as a list
   const dx = 1 / cellsPerMm;
@@ -28,8 +31,13 @@ export function createSurface(settings, bounds) {
   const xOf = (column) => bounds.minX + (column + 0.5) * dx;
   const hOf = (row) => bounds.maxH - (row + 0.5) * dx;
 
-  // The fingers pressing this moment, as the cells each one reaches.
+  // The fingers pressing this moment, with the cells each one reaches,
+  // and where each was a moment ago, to tell how fast it moves.
   let pressed = [];
+  const lately = new Map();
+  const rimShare = finger.rim || 0;
+  const wide = rimShare ? finger.rimWide : 1;
+  const wake = finger.wake || 0;
   let moving = false;
   let untilThick = 0; // seconds until the smallest ripples next melt away
   let stilling = 0; // seconds left of being stilled
@@ -74,7 +82,9 @@ export function createSurface(settings, bounds) {
       for (let row = firstRow; row <= lastRow; row += 1) {
         for (let column = firstColumn; column <= lastColumn; column += 1) {
           const at = row * width + column;
-          const now = phiAt(xOf(column), hOf(row)) > edgeMm ? 1 : 0;
+          const inside = phiAt(xOf(column), hOf(row));
+          const now = inside > edgeMm ? 1 : 0;
+          if (soaks) soaks[at] = now ? Math.min(1, Math.max(0, 1 - (inside - edgeMm) / settings.soak.bandMm)) : 0;
           if (now && !wet[at]) {
             let sum = 0;
             let count = 0;
@@ -102,18 +112,24 @@ export function createSurface(settings, bounds) {
       }
       cells = room.subarray(0, found);
     },
-    // The fingers pressing on the surface this moment: [{ x, h, press }],
-    // press from 0 (lightest) to 1 (firmest).
+    // The fingers pressing on the surface this moment: [{ id, x, h, press }],
+    // press from 0 (lightest) to 1 (firmest). A finger presses a dimple;
+    // with a rim, the liquid it displaces stands up in a ring around it;
+    // with a wake, a moving finger pushes liquid up ahead of it and leaves
+    // a trough behind.
     press(list) {
       pressed = list.map((one) => {
         const reached = [];
         const depth = finger.deepMm * (finger.lightest + (1 - finger.lightest) * one.press);
-        around(one.x, one.h, 3 * finger.widthMm, (at, ax, ah) => {
-          const share = Math.exp(-(ax * ax + ah * ah) / (2 * finger.widthMm * finger.widthMm));
-          reached.push(at, share, -depth * share);
+        const narrow = 2 * finger.widthMm * finger.widthMm;
+        around(one.x, one.h, 3 * finger.widthMm * wide, (at, ax, ah) => {
+          const middle = Math.exp(-(ax * ax + ah * ah) / narrow);
+          const share = rimShare ? Math.exp(-(ax * ax + ah * ah) / (narrow * wide * wide)) : middle;
+          reached.push(at, share, -depth * (middle - rimShare * share), (ax / finger.widthMm) * middle, (ah / finger.widthMm) * middle);
         });
-        return reached;
+        return { id: one.id, x: one.x, h: one.h, reached, speedX: 0, speedH: 0 };
       });
+      for (const id of lately.keys()) if (!list.some((one) => one.id === id)) lately.delete(id);
       if (list.length) moving = true;
     },
     // A push upwards at one place, as when liquid falls back into the pool.
@@ -157,6 +173,17 @@ export function createSurface(settings, bounds) {
       const steps = Math.max(1, Math.ceil(seconds / steadyS));
       const dt = seconds / steps;
       const fade = Math.exp(-dt / (stilling > 0 ? settings.stilledMs / 5000 : settings.calmS));
+      // How fast each finger moves, evened out over a few frames.
+      for (const one of pressed) {
+        const before = lately.get(one.id);
+        if (before && seconds > 0) {
+          const speedX = Math.max(-finger.fastest, Math.min(finger.fastest, (one.x - before.x) / seconds));
+          const speedH = Math.max(-finger.fastest, Math.min(finger.fastest, (one.h - before.h) / seconds));
+          one.speedX = before.speedX + (speedX - before.speedX) * 0.35;
+          one.speedH = before.speedH + (speedH - before.speedH) * 0.35;
+        }
+        lately.set(one.id, { x: one.x, h: one.h, speedX: one.speedX, speedH: one.speedH });
+      }
       let most = 0;
       for (let n = 0; n < steps; n += 1) {
         for (let k = 0; k < cells.length; k += 1) {
@@ -165,11 +192,16 @@ export function createSurface(settings, bounds) {
           // At the liquid's edge a wave turns back: beyond the edge counts as level with here.
           const near = (wet[at - 1] ? u[at - 1] : here) + (wet[at + 1] ? u[at + 1] : here) + (wet[at - width] ? u[at - width] : here) + (wet[at + width] ? u[at + width] : here);
           v[at] = (v[at] + (pull * (near - 4 * here) - level * here) * dt) * fade;
+          // Near its edge the liquid soaks a wave up, so less of it turns back.
+          if (soaks && soaks[at] > 0) v[at] *= Math.max(0, 1 - (dt * soaks[at]) / settings.soak.calmS);
         }
-        for (const reached of pressed) {
-          for (let k = 0; k < reached.length; k += 3) {
+        for (const one of pressed) {
+          const { reached } = one;
+          for (let k = 0; k < reached.length; k += 5) {
             const at = reached[k];
-            if (wet[at]) v[at] += stiff * reached[k + 1] * (reached[k + 2] - u[at]) * dt;
+            if (!wet[at]) continue;
+            v[at] += stiff * reached[k + 1] * (reached[k + 2] - u[at]) * dt;
+            if (wake) v[at] += wake * (reached[k + 3] * one.speedX + reached[k + 4] * one.speedH) * dt;
           }
         }
         most = 0;

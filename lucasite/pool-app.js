@@ -130,6 +130,7 @@ export function startPool(release) {
     const reading = instrument.lastReading();
     surface.press(
       shape.pressing().map((finger) => ({
+        id: finger.id,
         x: finger.x,
         h: finger.h,
         press: reading && reading.touch.id === finger.id ? Math.min(1, Math.max(0, (reading.wanted.gain - press.quiet) / (press.loud - press.quiet))) : 0.5,
