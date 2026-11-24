@@ -145,8 +145,12 @@ export function start(release) {
   }
   // The colour a finger loads at a point: one colour per set, as
   // absorbances; null off the egg.
+  let lastLoaded = null; // { row, column, hex }: what a finger last loaded (a debug reading)
   function loadAt(xMm, yMm) {
-    if (!instrument.surface().cellAt(xMm, EGG_HEIGHT_MM / 2 - yMm)) return null;
+    const cell = instrument.surface().cellAt(xMm, EGG_HEIGHT_MM / 2 - yMm);
+    if (!cell) return null;
+    const shown = sets.find((set) => set.name === look.set());
+    lastLoaded = { row: cell.row, column: cell.column, hex: cellHex(shown, scale(), cell) };
     const colours = new Float32Array(sets.length * 3);
     sets.forEach((set, index) => {
       cellColour(set, xMm, yMm).forEach((channel, j) => {
@@ -292,6 +296,7 @@ export function start(release) {
       `hidden UI ${ui.isOpen() ? 'open' : 'closed'}${wipe ? '  wiping' : ''}`,
       `paint ${field.amount().toFixed(0)}  covered ${(field.covered() * 100).toFixed(0)}%  ${field.hasWet() ? `wet ${field.wetness().toFixed(2)}` : 'set or bare'}  set ${look.set()}`,
       `press ${pressures.join(' ') || '-'}${range ? `  range ${range.smallest.toFixed(1)} to ${range.largest.toFixed(1)}` : ''}`,
+      `loaded ${lastLoaded ? `${lastLoaded.hex}  row ${lastLoaded.row} column ${lastLoaded.column}` : '-'}`,
     ].concat(instrument.readings());
   }
 
@@ -304,6 +309,7 @@ export function start(release) {
       set: () => look.set(),
       wiping: () => wipe !== null,
       pressures: () => Array.from(painting.values()).map((state) => state.pressure),
+      loaded: () => lastLoaded,
       // For the browser check: as if the egg had been left alone this long.
       leaveAlone: (seconds) => {
         lastTouchMs = performance.now() - seconds * 1000;

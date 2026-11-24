@@ -116,6 +116,7 @@ export function createPaintField(settings, inside, setCount) {
       loaded: false,
       load: 0, // what is left of the paint it landed with
       loadK: new Float32Array(K),
+      wiped: 0, // wet paint its pad has wiped up and keeps
       film: new Float32Array(LANES), // paint picked up on the way, by lane
       filmK: new Float32Array(LANES * K),
       travelled: 0, // mm along the stroke
@@ -196,6 +197,22 @@ export function createPaintField(settings, inside, setCount) {
           for (let j = 0; j < K; j += 1) finger.filmK[fk + j] = (finger.filmK[fk + j] * finger.film[b] + wetK[k + j] * take) / total;
           finger.film[b] = total;
           h -= take;
+        }
+
+        // A loaded finger pressed into wet paint of another colour puts its
+        // own paint in its place: the pad wipes up a share of what is there
+        // and lays as much from its load, so the mark takes the finger's
+        // colour, tinged by what was there. Paint of its own colour is left
+        // as it is, and the share falls as the load runs low.
+        if (h > 0 && g > 0 && lane.takeover > 0) {
+          let apart = 0;
+          for (let j = 0; j < K; j += 1) apart += Math.abs(wetK[k + j] - finger.loadK[j]);
+          const swap = Math.min(finger.load, h * lane.takeover * w * drag * g * Math.min(1, apart / K / lane.takeoverFullAt));
+          if (swap > 0) {
+            for (let j = 0; j < K; j += 1) wetK[k + j] = (wetK[k + j] * (h - swap) + finger.loadK[j] * swap) / h;
+            finger.load -= swap;
+            finger.wiped += swap;
+          }
         }
 
         // What the stroke wants to leave here: from its load, and from the

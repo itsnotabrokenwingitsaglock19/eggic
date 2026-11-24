@@ -65,6 +65,11 @@ export default {
       amountLight: 0.3, // how much the lightest touch lays, as a share of layMm
       amountFirm: 1.6, // and the firmest press
       pick: 0.05, // how much wet paint the pad picks up at each press
+      // How strongly a loaded finger's paint takes the place of wet paint of
+      // another colour under it, at each press (0: not at all); and how far
+      // apart the two colours must be for that to happen in full.
+      takeover: 0.1,
+      takeoverFullAt: 0.25,
       down: 0.3, // how fast it takes along paint that stands too high
       up: 0.5, // how fast it lays paint where there is too little
     },
@@ -129,7 +134,8 @@ export default {
     // layout: the rows from the egg's point down to its base, one character
     // per column, each the place of that cell's colour in `colours` (0 to 9
     // for the ten shades; a, b and c for the highlights). A finger loads
-    // the colour of the cell it lands on.
+    // the colour of the cell it lands on. A fourth set, for testing, follows
+    // them.
     sets: [
       {
         name: 'yellows',
@@ -165,6 +171,25 @@ export default {
         layouts: {
           pentatonic: ['51a777', '509993', '400933', 'b46663', '26668c', '226688'],
           major: ['00a733', '007788', '007888', '551188', 'b51118', '551112', '45922c', '499926'],
+        },
+      },
+      // A set for testing, not a family: twelve unlike colours (red, orange,
+      // yellow, green, cyan, blue, lavender, pink, brown, grey, white,
+      // black), laid out so that every cell is clearly unlike all eight of
+      // its neighbours, in hue and not only in tone: no two of one family
+      // (such as cyan and blue, or red and pink) lie side by side, and the
+      // same colour is seldom two cells away. It shows whether each cell gives its own
+      // colour, how unlike colours mix, how far a dark one spreads and what
+      // white does.
+      {
+        name: 'varied',
+        colours: [
+          '#D7263D', '#FF7A1A', '#FFD23F', '#2FA84F', '#18BFD0', '#2456D6',
+          '#B79CED', '#FF7FB5', '#7A4B2A', '#808A94', '#FFFFFF', '#1A1A1A',
+        ],
+        layouts: {
+          pentatonic: ['b1a064', '64b328', '827574', 'a591a8', 'b03753', '629190'],
+          major: ['914064', '57ab28', 'b15064', '639328', '82057a', 'a4ba28', '171536', '9397b0'],
         },
       },
     ],
